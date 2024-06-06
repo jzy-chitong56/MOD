@@ -11,31 +11,26 @@ jobs:
     runs-on: ubuntu-latest # 或者其他支持Qt的环境，如macOS或Windows
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
 
     - name: Install Qt
-      uses: jurplel/install-qt-action@v3
+      uses: jurplel/install-qt-action@v2
       with:
-          version: '5.15.2'
-          target: 'desktop'
-
-    - name: Install dependencies
+          version: 5.15.2
+          cached: 'false'
+    - name: ubuntu install GL library
+      run: sudo apt-get install -y libglew-dev libglfw3-dev
+    - uses: actions/checkout@v4
+      with:
+          fetch-depth: 1
+    - name: build ubuntu
       run: |
-        sudo apt-get update
-        sudo apt-get install -y qtbase5-dev qtchooser qttools5-dev-tools build-essential qtmultimedia5-dev
-
-    - name: Configure Qt
-      run: |
-        qmake -qt=5 ./WC3ModManager.pro
+          qmake
+          make
+    
+        # qmake -qt=5 ./WC3ModManager.pro
   # cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5
 
-    - name: Build
-      run: make -j$(nproc) # 使用所有可用CPU核心进行并行编译
 
-    # 可选：运行测试
-    #- name: Run Tests
-    #  run: ./your_test_runner # 替换为实际的测试执行命令
 
     # 可选：上传构建产物
     #- name: Upload Artifact
