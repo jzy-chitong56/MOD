@@ -12,6 +12,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
+          dir: .
           version: '5.15.2'
           target: 'desktop'
 
@@ -20,12 +21,10 @@ jobs:
         with:
          fetch-depth: 1
             
-      - name: build-mingw
-        shell: cmd
+      - name: Build project
+        id: BuildPorject
         run: |
-          mkdir build
-          cd build
-          qmake -r CONFIG+=release ..\WC3ModManager.pro
+          qmake
           make
       - name: package
         shell: cmd
