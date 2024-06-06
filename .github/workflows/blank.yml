@@ -10,6 +10,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install conan
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install conan
+          pip3 install conan --upgrade
+          conan --version
+          conan profile new default --detect
       - name: Build project
         uses: nicledomaS/cmake_build_action@v1.4
         with:
