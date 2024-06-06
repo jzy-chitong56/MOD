@@ -21,7 +21,7 @@ jobs:
 
     - name: Configure Qt
       run: |
-        qmake -qt=5 ../WC3ModManager.pro
+        qmake -qt=5 ./WC3ModManager.pro
         # cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5
 
     - name: Build
