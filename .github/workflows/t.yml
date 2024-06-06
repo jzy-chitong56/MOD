@@ -23,8 +23,8 @@ jobs:
     - name: Configure Qt
       run: |
 
-
-        cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5 # 调整路径以匹配您的系统和Qt安装位置
+        qmake -qt=5 WC3ModManager.pro #
+        # cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5 # 调整路径以匹配您的系统和Qt安装位置
 
     - name: Build
       run: make -j$(nproc) # 使用所有可用CPU核心进行并行编译
