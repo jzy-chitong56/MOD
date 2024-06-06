@@ -13,9 +13,6 @@ jobs:
       - name: Build project
         uses: nicledomaS/cmake_build_action@v1.4
         with:
-          submodule_update: ON
-          run_tests: OFF
-          unit_test_build: -Dtest=ON
           create_package: YES
           package_generator: exe
       - name: 上传附件
