@@ -8,104 +8,37 @@ jobs:
   ubuntu-build:
     runs-on: ubuntu-latest
     steps:
-      - name: Install dependencies
-        run: |
-          sudo apt update
-          sudo apt install \
-            build-essential cmake ninja-build pkg-config \
-            libboost-dev libssl-dev zlib1g-dev
 
-      - name: Downgrade Python version
-        uses: actions/setup-python@v4
-        id: cp39
+      - name: cacheQt
+        id: WindowsCacheQt
+        uses: actions/cache@v1
         with:
-          python-version: '3.9'
-
+          path: ../Qt/${{matrix.qt_ver}}/${{matrix.qt_arch_install}}
+          key: ${{ runner.os }}-Qt/${{matrix.qt_ver}}/${{matrix.qt_arch}}
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
-          version: "6.5.0"
-          archives: icu qtbase qtsvg qttools
-
-      - name: Install Dependencies
-        run: brew install ninja doxygen graphviz protobuf hdf5@1.10 pkg-config
-  
-      - name: Install Cap’n Proto
-        run: |
-          mkdir "${{ runner.workspace }}/capnp"
-          cd "${{ runner.workspace }}/capnp"
-          curl -O https://capnproto.org/capnproto-c++-0.9.0.tar.gz
-          tar zxf capnproto-c++-0.9.0.tar.gz
-          cd capnproto-c++-0.9.0
-          ./configure
-          make -j
-          sudo make install
+          version: ${{ matrix.qt_ver }}
+          target: ${{ matrix.qt_target }}
+          arch: ${{ matrix.qt_arch }}
+          cached: ${{steps.WindowsCacheQt.outputs.cache-hit }}
 
       - name: Checkout
         uses: actions/checkout@v4
         with:
-            submodules:  'true'
-            fetch-depth: 0
-
-        
-      - name: Install Python requirements
+         fetch-depth: 1
+            
+      - name: build-mingw
+        shell: cmd
         run: |
-          sudo pip3 install -r "$GITHUB_WORKSPACE/doc/requirements.txt"
-  
-      - name: CMake
+          mkdir build
+          cd build
+          qmake -r CONFIG+=release CONFIG+=qtquickcompiler ..\${{ env.targetName }}.pro
+          make
+      - name: package
+        shell: cmd
         run: |
-          mkdir "${{ runner.workspace }}/_build"
-          cd "${{ runner.workspace }}/_build"
-          cmake $GITHUB_WORKSPACE -G "Ninja" \
-          -DHAS_HDF5=ON \
-          -DHAS_QT5=ON \
-          -DHAS_CURL=ON \
-          -DHAS_CAPNPROTO=ON \
-          -DHAS_FTXUI=ON \
-          -DBUILD_DOCS=ON \
-          -DBUILD_APPS=ON \
-          -DBUILD_SAMPLES=ON \
-          -DBUILD_TIME=ON \
-          -DBUILD_PY_BINDING=ON \
-          -DBUILD_CSHARP_BINDING=OFF \
-          -DBUILD_ECAL_TESTS=ON \
-          -DECAL_INCLUDE_PY_SAMPLES=OFF \
-          -DECAL_INSTALL_SAMPLE_SOURCES=ON \
-          -DECAL_JOIN_MULTICAST_TWICE=OFF \
-          -DECAL_NPCAP_SUPPORT=OFF \
-          -DECAL_THIRDPARTY_BUILD_CMAKE_FUNCTIONS=ON \
-          -DECAL_THIRDPARTY_BUILD_PROTOBUF=OFF \
-          -DECAL_THIRDPARTY_BUILD_SPDLOG=ON \
-          -DECAL_THIRDPARTY_BUILD_TINYXML2=ON \
-          -DECAL_THIRDPARTY_BUILD_FINEFTP=ON \
-          -DECAL_THIRDPARTY_BUILD_CURL=OFF \
-          -DECAL_THIRDPARTY_BUILD_GTEST=ON \
-          -DECAL_THIRDPARTY_BUILD_HDF5=OFF \
-          -DECAL_THIRDPARTY_BUILD_RECYCLE=ON \
-          -DECAL_THIRDPARTY_BUILD_TCP_PUBSUB=ON \
-          -DECAL_THIRDPARTY_BUILD_QWT=ON \
-          -DECAL_THIRDPARTY_BUILD_YAML-CPP=ON \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_PREFIX_PATH=/usr/local/opt/hdf5@1.10 \
-          -DCMAKE_CXX_STANDARD=17 \
-          -DCMAKE_FIND_PACKAGE_PREFER_CONFIG=ON \
-          -DPython_FIND_STRATEGY=LOCATION \
-          -DPython_FIND_REGISTRY=NEVER
-          sudo mkdir /etc/ecal
-          sudo cp "$GITHUB_WORKSPACE/ecal/core/cfg/ecal.ini" /etc/ecal
-        shell: bash
-  
-      - name: Build Release
-        run: cmake --build . --config Release
-        working-directory: ${{ runner.workspace }}/_build
-  
-      - name: Build Python Wheel
-        run: cmake --build . --target create_python_wheel --config Release
-        working-directory: ${{ runner.workspace }}/_build
-
-      - name: Pack
-        run: cpack -G DragNDrop
-        working-directory: ${{ runner.workspace }}/_build
+          windeployqt build\release\${{ env.targetName }}.exe
             
       - name: 上传附件
         uses: actions/upload-artifact@v4
