@@ -16,15 +16,13 @@ jobs:
 
     - name: Install dependencies
       run: |
-
         sudo apt-get update
-        sudo apt-get install -y qtbase5-dev qtchooser qttools5-dev-tools build-essential qtmultimedia5-dev # 根据项目需要安装其他Qt模块和依赖
+        sudo apt-get install -y qtbase5-dev qtchooser qttools5-dev-tools build-essential qtmultimedia5-dev
 
     - name: Configure Qt
       run: |
-
-        qmake -qt=5 WC3ModManager.pro #
-        # cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5 # 调整路径以匹配您的系统和Qt安装位置
+        qmake -qt=5 ./home/runner/work/MOD/MOD/WC3ModManager.pro
+        # cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5
 
     - name: Build
       run: make -j$(nproc) # 使用所有可用CPU核心进行并行编译
