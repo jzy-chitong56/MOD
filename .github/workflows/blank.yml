@@ -15,6 +15,7 @@ jobs:
           dir: .
           version: '5.15.2'
           target: 'desktop'
+          aqtversion: '==3.1.*'
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,14 +23,32 @@ jobs:
          fetch-depth: 1
             
       - name: Build project
-        id: BuildPorject
-        run: |
-          qmake
-          make
-      - name: package
+        id: build
         shell: cmd
         run: |
-          windeployqt build\release\WC3ModManager.exe
+          call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.msvc_arch }}
+          cd ./${QtApplicationName}
+          qmake
+          nmake
+          echo winSdkDir=%WindowsSdkDir% >> %GITHUB_ENV%
+          echo winSdkVer=%WindowsSdkVersion% >> %GITHUB_ENV%
+          echo vcToolsInstallDir=%VCToolsInstallDir% >> %GITHUB_ENV%
+          echo vcToolsRedistDir=%VCToolsRedistDir% >> %GITHUB_ENV%
+          ls
+          tree /F
+      - name: package
+        id: package
+        env:
+          archiveName: ${{ matrix.qt_ver }}-${{ matrix.qt_target }}-${{ matrix.qt_arch }}
+          msvcArch: ${{ matrix.msvc_arch }}          
+        shell: pwsh
+        run: |
+          tree D: /F
+          echo '------- Run scripts\windows-publish.ps1'
+          & scripts\windows-publish.ps1 ${env:archiveName} ${env:QtApplicationName}
+          echo '------- Finish scripts windows-publish.ps1'
+          $name = ${env:archiveName}
+          echo "::set-output name=packageName::$name"
             
       - name: 上传附件
         uses: actions/upload-artifact@v4
