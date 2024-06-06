@@ -1,0 +1,42 @@
+name: C++ Build with Qt
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # 或者其他支持Qt的环境，如macOS或Windows
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@4
+
+    - name: Install dependencies
+      run: |
+
+        sudo apt-get update
+        sudo apt-get install -y qtbase5-dev qtchooser qttools5-dev-tools build-essential qtmultimedia5-dev # 根据项目需要安装其他Qt模块和依赖
+
+    - name: Configure Qt
+      run: |
+
+
+        cmake . -DCMAKE_PREFIX_PATH=/usr/lib/x86_64-linux-gnu/qt5 # 调整路径以匹配您的系统和Qt安装位置
+
+    - name: Build
+      run: make -j$(nproc) # 使用所有可用CPU核心进行并行编译
+
+    # 可选：运行测试
+    #- name: Run Tests
+    #  run: ./your_test_runner # 替换为实际的测试执行命令
+
+    # 可选：上传构建产物
+    #- name: Upload Artifact
+    #  uses: actions/upload-artifact@v4
+    #  with:
+    #    name: your_binary_name
+    #    path: path/to/your/binary # 指定构建产出的二进制文件路径
+
