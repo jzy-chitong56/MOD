@@ -323,7 +323,6 @@ void MainWindow::updateLaunchBtns()
     launchGameAc->setEnabled(false);
     launchEditorAc->setEnabled(false);
 
-
     const bool modEnabled = !core->mountedMod.isEmpty(),
                exp = gameVersionCbx->isChecked();
 
@@ -337,7 +336,6 @@ void MainWindow::updateLaunchBtns()
     launchGameAc->setEnabled(true);
     launchEditorAc->setEnabled(true);
 }
-
 
 void MainWindow::updateAllowOrVersion(const bool version)
 {
@@ -451,7 +449,6 @@ void MainWindow::setAllowOrVersion( bool enable,  bool version)
     if(core->setAllowOrVersion(enable, version)) updateLaunchBtns();
     else updateAllowOrVersion(version);
 }
-
 
 void MainWindow::refresh(const bool silent)
 {
