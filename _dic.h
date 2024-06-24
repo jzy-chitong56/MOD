@@ -31,10 +31,10 @@ static const QString
     WC3MM = QStringLiteral(u"WC3 Mod Manager"),
 
 //LAUNCH STRINGS
-    WC3_EXE = QStringLiteral(u"Warcraft III.exe"),
+    WC3_EXE  = QStringLiteral(u"Warcraft III.exe"),
     WC3X_EXE = QStringLiteral(u"Frozen Throne.exe"),
     WC3R_EXE = QStringLiteral(u"Frozen Throne.exe or Reforged's Warcraft III.exe"),
-    WE_EXE  = QStringLiteral(u"World Editor.exe"),
+    WE_EXE   = QStringLiteral(u"World Editor.exe"),
 
     L_NONE = QStringLiteral(u"<none>"),
 
@@ -119,6 +119,7 @@ static const QString
     X_DISABLED_         = QStringLiteral(u"%0 disabled."),
     lDONE_              = QStringLiteral(u"done."),
     X_FILES_SUCCEEDED   = QStringLiteral(u"%0 succeeded").arg(X_FILES),
+    SET_COMPLETED_      = QStringLiteral(u"Setting Completed."),
 
 //RESULT - ERROR
     dERROR          = QStringLiteral(u"Error"),

@@ -26,7 +26,7 @@ public:        enum MountResult { MountReady, Mounted, MountFailed, OtherMounted
                               
 private:       QSplashScreen *splashScreen;
                QWidget *finishWgt=nullptr;
-               bool setGameVersion ;
+               bool setGameVersion = true;
 
 public:        Config cfg;
 

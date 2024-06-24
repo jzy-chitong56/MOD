@@ -108,29 +108,26 @@ void Core::launch(const bool editor, const QString &args)
     bool success;
     const QString &exe = editor ? d::WE_EXE : (setGameVersion ? d::WC3X_EXE : d::WC3_EXE);
     QString launchexe = exe;
-    bool we = true;
     showMsg(d::LAUNCHING_X___.arg(editor ? d::WE : d::GAME), Msgr::Busy);
-
-    if(editor || args.isEmpty())
+    if(editor)
     {
-        we = false;
         success = QDesktopServices::openUrl(QUrl::fromLocalFile(cfg.getSetting(Config::kGamePath)+"/"+exe));
     }
     else
     {
         QProcess war3;
         war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+exe);
-        if(!editor) war3.setNativeArguments(args);
+        war3.setNativeArguments(args);
         success = war3.startDetached();
     }
-    if (!success && setGameVersion && we == true)
+    if (!success && setGameVersion && !editor)
     {
-        QString REF = d::WC3_EXE;
+        QString ref = d::WC3_EXE;
         QProcess war3;
-        launchexe = d::WC3R_EXE;
-        war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+REF);
-        if(!editor) war3.setNativeArguments(args);
+        war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+ref);
+        war3.setNativeArguments(args);
         success = war3.startDetached();
+        launchexe = d::WC3R_EXE;
     }
     if(success) showMsg(d::X_LAUNCHED_.arg(editor ? d::WE : d::GAME));
     else showMsg(d::FAILED_TO_X_.arg(d::lLAUNCH_X).arg(launchexe), Msgr::Error);
@@ -147,7 +144,7 @@ bool Core::setAllowOrVersion(const bool enable, const bool version)
                          reinterpret_cast<const BYTE*>(&value), sizeof(value))
                 == ERROR_SUCCESS)
         {
-            showMsg("Setting Completed");
+            showMsg(d::SET_COMPLETED_);
             RegCloseKey(hKey);
             return true;
         }
