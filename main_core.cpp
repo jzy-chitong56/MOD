@@ -19,8 +19,6 @@
 const wchar_t *Core::regAllowFiles  = L"Allow Local Files",
               *Core::regGameVersion = L"Preferred Game Version";
 
-
-
 Core::Core() : QObject(),
     splashScreen(new QSplashScreen(pxLogo))
 {
@@ -108,7 +106,6 @@ QString Core::getMounted()
 void Core::launch(const bool editor, const QString &args)
 {
     bool success;
-
     const QString &exe = editor ? d::WE_EXE : (setGameVersion ? d::WC3X_EXE : d::WC3_EXE);
 
     showMsg(d::LAUNCHING_X___.arg(editor ? d::WE : d::GAME), Msgr::Busy);
@@ -127,12 +124,9 @@ void Core::launch(const bool editor, const QString &args)
     else showMsg(d::FAILED_TO_X_.arg(d::lLAUNCH_X).arg(exe), Msgr::Error);
 }
 
-
 bool Core::setAllowOrVersion(const bool enable, const bool version)
 {
     setGameVersion = version;
-    showMsg(" ");
-
     HKEY hKey;
     if(Config::regOpenWC3(KEY_ALL_ACCESS, hKey))
     {
@@ -141,7 +135,7 @@ bool Core::setAllowOrVersion(const bool enable, const bool version)
                          reinterpret_cast<const BYTE*>(&value), sizeof(value))
                 == ERROR_SUCCESS)
         {
-
+            showMsg("Setting Completed");
             RegCloseKey(hKey);
             return true;
         }
