@@ -32,6 +32,7 @@ static const QString
 
 //LAUNCH STRINGS
     WC3_EXE = QStringLiteral(u"Warcraft III.exe"),
+    WC3X_EXE = QStringLiteral(u"Frozen Throne.exe"),
     WE_EXE  = QStringLiteral(u"World Editor.exe"),
 
     L_NONE = QStringLiteral(u"<none>"),

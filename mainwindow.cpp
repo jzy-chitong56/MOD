@@ -323,9 +323,10 @@ void MainWindow::updateLaunchBtns()
     launchGameAc->setEnabled(false);
     launchEditorAc->setEnabled(false);
 
+
     const bool modEnabled = !core->mountedMod.isEmpty(),
                exp = gameVersionCbx->isChecked();
-    
+
     launchGameAc->setIcon(gameIcons[size_t(modEnabled<<1)|exp]);
     launchGameAc->setToolTip(d::LAUNCH_X.arg(modEnabled ? core->mountedMod+" ("+(exp ? d::EXPANSION : d::CLASSIC)+")"
                                                         : exp ? d::TFT : d::ROC));
@@ -336,6 +337,7 @@ void MainWindow::updateLaunchBtns()
     launchGameAc->setEnabled(true);
     launchEditorAc->setEnabled(true);
 }
+
 
 void MainWindow::updateAllowOrVersion(const bool version)
 {
@@ -442,11 +444,14 @@ void MainWindow::updateMountState(const QString &modName, const bool enableBtn)
 
 void MainWindow::launchEditor() { core->launch(true); }
 
-void MainWindow::setAllowOrVersion(const bool enable, const bool version)
+void MainWindow::setAllowOrVersion( bool enable,  bool version)
 {
+    enable = allowFilesCbx->isChecked();
+    version = gameVersionCbx->isChecked();
     if(core->setAllowOrVersion(enable, version)) updateLaunchBtns();
     else updateAllowOrVersion(version);
 }
+
 
 void MainWindow::refresh(const bool silent)
 {
@@ -462,7 +467,7 @@ void MainWindow::refresh(const bool silent)
     thr->start(modTable->modData, core->mountedMod);
 
     updateAllowOrVersion();
-    updateAllowOrVersion(true);
+    updateAllowOrVersion(gameVersionCbx->isChecked());
 }
 
 void MainWindow::scanMods(const md::modData &modData, const QStringList &modNames)

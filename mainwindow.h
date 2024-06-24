@@ -79,7 +79,7 @@ private:       void showMsg   (const QString &msg, const Msgr::Type &msgType=Msg
                void updateAllowOrVersion(const bool version=false);
                void updateMountState(const QString &modName=QString(), const bool enableBtn=true);
 private slots: void launchEditor();
-               void setAllowOrVersion(const bool enable, const bool version=false);
+               void setAllowOrVersion(const bool enable, const bool version);
                void setVersion(const bool enable){ setAllowOrVersion(enable, true); }
 
                void refresh(const bool silent=false);
