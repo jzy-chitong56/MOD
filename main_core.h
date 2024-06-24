@@ -23,7 +23,6 @@ public:        enum MountResult { MountReady, Mounted, MountFailed, OtherMounted
                              pxVersion = QPixmap(":/img/version.png");
                
                QString mountedMod;
-
                               
 private:       QSplashScreen *splashScreen;
                QWidget *finishWgt=nullptr;
