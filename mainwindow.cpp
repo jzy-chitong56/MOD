@@ -208,7 +208,17 @@ void MainWindow::launchGame()
             status("Game launched.");
             if(shortcutMode) emit shortcutQuit();
         }
-        else status("Failed to launch Frozen Throne.exe", true);
+        else 
+        {
+            if(QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QString::fromStdString(config->getSetting("GamePath"))+"/Warcraft III.exe")))
+        {
+            status("Game launched.");
+            if(shortcutMode) emit shortcutQuit();
+        }
+        }
+        else
+status("Failed to launch Frozen Throne.exe or Reforged's Warcraft III .exe", true);
     }
     else
     {
