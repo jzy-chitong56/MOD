@@ -1,907 +1,767 @@
-#include "_dic.h"
-#include "_utils.h"
+#include "ui_mainwindow.h"
+#include "ui_about.h"
 #include "thread.h"
-#include "main_core.h"
-#include "mainwindow.h"
-#include "dg_shortcuts.h"
-#include "dg_settings.h"
+#include "utils.h"
 
-#include <QMenuBar>
-#include <QToolBar>
-#include <QLayout>
-#include <QCheckBox>
-#include <QPushButton>
-#include <QTableWidget>
-#include <QHeaderView>
-#include <QStatusBar>
-#include <QLabel>
-#include <QDirIterator>
-#include <QFileDialog>
-#include <QMessageBox>
-#include <QDesktopServices>
-#include <QDialogButtonBox>
-#include <QTimer>
-#include <QLineEdit>
+MainWindow:: MainWindow(bool newLaunchingShortcut, QMainWindow *newSplash, QWidget *parent) :
+    QMainWindow(parent),
+    ui(new Ui::MainWindow)
+{
+    shortcutMode = newLaunchingShortcut;
+    splash = newSplash;
 
-#include <winerror.h>
-
-#include <QDebug>
-
-/********************************************************************/
-/*      MOD TABLE       *********************************************/
-/********************************************************************/
-    ModTable::ModTable() : QTableWidget(0, 3)
+    if(shortcutMode) connect(this, &MainWindow::shortcutQuit, qApp, &QApplication::quit, Qt::QueuedConnection);
+    else
     {
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        setContextMenuPolicy(Qt::ActionsContextMenu);
-        setEditTriggers(QAbstractItemView::NoEditTriggers);
-        setDragEnabled(false);
-        setAlternatingRowColors(true);
-        setSelectionMode(QAbstractItemView::SingleSelection);
-        setSelectionBehavior(QAbstractItemView::SelectRows);
-        QFont tableFont = font();
-        tableFont.setPointSizeF(tableFont.pointSize()*1.2);
-        setFont(tableFont);
+        status("Setting up UI...");
+        ui->setupUi(this);
 
-            verticalHeader()->hide();
-            setHorizontalHeaderLabels({ d::MOD, d::SIZE, d::FILES });
-            horizontalHeader()->setStretchLastSection(true);
-            horizontalHeaderItem(0)->setTextAlignment(Qt::AlignVCenter|Qt::AlignLeft);
-            horizontalHeaderItem(1)->setTextAlignment(Qt::AlignVCenter|Qt::AlignRight);
-            horizontalHeaderItem(2)->setTextAlignment(Qt::AlignVCenter|Qt::AlignLeft);
+        //Icons
+        warningIcon.addPixmap(QPixmap(":/icons/warning.png"), QIcon::Disabled);
+
+        refresh();
+
+        //Menubar
+        connect(ui->actionOpenGameFolder, SIGNAL(triggered()), this, SLOT(openGameFolder()));
+        connect(ui->actionOpenModsFolder, SIGNAL(triggered()), this, SLOT(openModsFolder()));
+        connect(ui->actionSettings, SIGNAL(triggered()), this, SLOT(openSettings()));
+        connect(ui->actionAbout, SIGNAL(triggered()), this, SLOT(openAbout()));
+
+        //Tools
+        connect(ui->gameBtn, SIGNAL(clicked()), this, SLOT(launchGame()));
+        connect(ui->editorBtn, SIGNAL(clicked()), this, SLOT(launchEditor()));
+        connect(ui->allowFilesCbx, SIGNAL(stateChanged(int)), this, SLOT(setAllowFiles()));
+        connect(ui->gameVersionCbx, SIGNAL(stateChanged(int)), this, SLOT(setGameVersion()));
+        connect(ui->addModBtn, SIGNAL(clicked()), this, SLOT(addMod()));
+        connect(ui->refreshBtn, SIGNAL(clicked()), this, SLOT(refresh()));
+
+        //Modlist
+        connect(ui->modList, SIGNAL(itemDoubleClicked(QTableWidgetItem*)), this, SLOT(renameModStart(QTableWidgetItem*)));
+        QAction *actionMount = new QAction("Mount", ui->modList);
+        ui->modList->addAction(actionMount);
+        connect(actionMount, SIGNAL(triggered()), this, SLOT(mountMod()));
+        ui->modList->addAction(ui->actionOpen);
+        connect(ui->actionOpen, SIGNAL(triggered()), this, SLOT(openModFolder()));
+        ui->modList->addAction(ui->actionRename);
+        connect(ui->actionRename, SIGNAL(triggered()), this, SLOT(renameModAction()));
+        ui->modList->addAction(ui->actionDelete);
+        connect(ui->actionDelete, SIGNAL(triggered()), this, SLOT(deleteMod()));
+
+        splash->close();
+        delete splash;
+        splash = nullptr;
+        status("Ready.");
     }
+}
 
-    QLabel* ModTable::cellLabel(const int row, const int column) const
-    { return dynamic_cast<QLabel *>(cellWidget(row, column)); }
+void MainWindow::openGameFolder()
+{
+    status("Opening game folder...");
 
-    void ModTable::resizeCR(const int row)
+    if(QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(config->getSetting("GamePath")))))
+        status("Game folder opened.");
+    else status("Failed to open game folder.");
+}
+
+void MainWindow::openModsFolder()
+{
+    status("Opening mods folder...");
+
+    if(QDesktopServices::openUrl(QUrl::fromLocalFile(QString::fromStdString(config->modPath))))
+        status("Mods folder opened.");
+    else status("Failed to open mods folder.");
+}
+
+void MainWindow::openSettings()
+{
+    if(!settings) settings = new Settings(this, config);
+    if(settings->exec() == 1) refresh("Settings saved.");
+}
+
+void MainWindow::openAbout()
+{
+    if(!about)
     {
-        resizeColumnToContents(0);
-        resizeColumnToContents(1); // Last column (2) is stretched
-        if(row >=0 && row < rowCount()) resizeRowToContents(row);
+        about = new QDialog(this);
+        Ui::About uiAbout;
+        uiAbout.setupUi(about);
+        about->setWindowFlag(Qt::MSWindowsFixedSizeDialogHint);
     }
+    about->show();
+}
 
-    void ModTable::addMod(const QString &modName, const int row, const bool addData)
+void MainWindow::refresh(QString statusMsg, QString selectedMod, bool scanMods)
+{
+    if(!shortcutMode)
     {
-        if(addData)
+        getAllowFiles();
+        getGameVersion();
+
+        if(scanMods)
         {
-            modNames.insert(row, modName);
-            modData.insert({ modName, md::newData(row) });
-            for(int i=row+1; i < modNames.length(); ++i) // Renumber mods following added
-                md::setRow(modData[modNames[i]], i);
-        }
+            int selectedRow = -1;
+            if(config->getSetting("Mounted") != "") selectedMod = QString::fromStdString(config->getSetting("Mounted"));
+            else if(selectedMod == "") selectedRow = ui->modList->currentRow();
 
-        insertRow(row);
+            ui->modList->clearContents();
+            ui->modList->setRowCount(0);
 
-        QLabel *nameLbl = new QLabel(modName),
-               *sizeLbl = new QLabel(d::ZERO_MB),
-               *filesLbl = new QLabel(d::ZERO_FILES);
-        nameLbl->setContentsMargins(3, 0, 3, 0);
-        setCellWidget(row, 0, nameLbl);
-        sizeLbl->setContentsMargins(3, 0, 3, 0);
-        sizeLbl->setAlignment(Qt::AlignVCenter|Qt::AlignRight);
-        setCellWidget(row, 1, sizeLbl);
-        filesLbl->setContentsMargins(3, 0, 3, 0);
-        setCellWidget(row, 2, filesLbl);
-        resizeCR(row);
-    }
-
-    void ModTable::deleteMod(const QString &modName)
-    {
-        if(md::exists(modData, modName))
-        {
-            const int row = this->row(modName);
-
-            modNames.removeAt(row);
-            modData.erase(modName);
-            for(int i=row; i < modNames.length(); ++i) // Renumber mods following deleted
-                md::setRow(modData[modNames[i]], i);
-
-            removeRow(row);
-            resizeCR();
-        }
-    }
-
-    void ModTable::updateMod(const QString &modName, const QString &modSize, const QString &fileCount, const qint64 size)
-    {
-        if(md::exists(modData, modName))
-        {
-            const int row = this->row(modName);
-
-            QLabel *sizeLbl = cellLabel(row, 1),
-                   *fileLbl = cellLabel(row, 2);
-
-            const QString &oldSize = sizeLbl->text(),
-                          &oldCount = fileLbl->text();
-
-            bool resize = oldSize.length() != modSize.length() || oldCount.length() != fileCount.length(),
-                 focus = !hasFocus() && currentRow() == row;
-            
-            setSize(modName, size);
-            sizeLbl->setText(modSize);
-            fileLbl->setText(fileCount);
-
-            if(isRowHidden(row))
+            QDirIterator itMods(QString::fromStdString(config->modPath), QDir::NoDotAndDotDot|QDir::Dirs);
+            while(itMods.hasNext())
             {
-                if(modSize != d::ZERO_MB || fileCount != d::ZERO_FILES)
+                itMods.next();
+                QString qsModSize = "0 MB", qsFileCount = "0 files",
+                        modName = itMods.fileName();
+                int row = ui->modList->rowCount();
+                if(selectedMod == modName) selectedRow = row;
+
+                ui->modList->insertRow(row);
+
+                if(modName.toStdString() == config->getSetting("Mounted"))
                 {
-                    showRow(row);
-                    resize = true;
+                    qsModSize = QString::fromStdString(config->getSetting("MountedSize"));
+                    qsFileCount = QString::fromStdString(config->getSetting("MountedCount"));
                 }
-                else focus = false;
-            }
-            else focus = focus && oldSize == d::ZERO_MB && oldCount == d::ZERO_FILES;
+                else ui->modList->hideRow(row);
 
-            if(resize) resizeCR(row);
-            if(focus) setFocus();
-        }
-    }
+                ui->modList->setItem(row, 0, new QTableWidgetItem(modName));
+                ui->modList->setItem(row, 1, new QTableWidgetItem(qsModSize));
+                ui->modList->setItem(row, 2, new QTableWidgetItem(qsFileCount));
 
-    void ModTable::renameMod(const QString &modName, const QString &newName)
-    {
-        if(md::exists(modData, modName))
-        {
-            const int row = this->row(modName);
-
-            modNames[row] = newName;
-
-            const md::data &data = modData[modName];
-            modData.erase(modName);
-            modData.insert({ newName, data });
-
-            cellLabel(row, 0)->setText(newName);
-            resizeCR();
-        }
-    }
-
-/********************************************************************/
-/*      MAIN WINDOW     *********************************************/
-/********************************************************************/
-MainWindow::MainWindow(Core *const core) : QMainWindow(),
-    core(core),
-    gameIcons({ u::largestIcon(QIcon(":/icons/war3.ico")),      u::largestIcon(QIcon(":/icons/war3x.ico")),
-                u::largestIcon(QIcon(":/icons/war3_mod.ico")),  u::largestIcon(QIcon(":/icons/war3x_mod.ico")) }),
-    editIcons({ u::largestIcon(QIcon(":/icons/worldedit.ico")), u::largestIcon(QIcon(":/icons/worldedit_mod.ico")) })
-{
-    core->setParent(this);
-    msgr.setParent(this);
-
-    showMsg(d::SETUP_UI___, Msgr::Busy);
-
-    setWindowTitle(d::WC3MM);
-    setMinimumSize(420, 350);
-
-    // MENUBAR
-        QMenu *fileMenu  = new QMenu(d::aFILE),
-              *toolsMenu = new QMenu(d::aTOOLS),
-              *aboutMenu = new QMenu(d::aHELP);
-        menuBar()->addMenu(fileMenu);
-        menuBar()->addMenu(toolsMenu);
-        menuBar()->addMenu(aboutMenu);
-
-            QAction *acOpenGameFolder = new QAction(d::OPEN_X.arg(d::X_FOLDER).arg(d::aX).arg(d::GAME)),
-                    *acOpenModsFolder = new QAction(d::OPEN_X.arg(d::X_FOLDER).arg(d::aX).arg(d::MODS)),
-                    *acOpenShortcuts  = new QAction(d::aX.arg(d::CREATE_uSHORTCUTS)),
-                    *acOpenSettings   = new QAction(d::aX.arg(d::SETTINGS)),
-                    *acOpenAbout      = new QAction(d::aX.arg(d::ABOUT));
-            fileMenu->addActions({ acOpenGameFolder, acOpenModsFolder });
-            toolsMenu->addActions({ acOpenShortcuts, acOpenSettings });
-            aboutMenu->addAction(acOpenAbout);
-
-    // TOOLBARS
-    QToolBar *gameToolBar = new QToolBar(d::GAME_cTOOLBAR),
-             *modsToolBar = new QToolBar(d::MODS_cTOOLBAR);
-    addToolBar(gameToolBar);
-    addToolBarBreak();
-    addToolBar(modsToolBar);
-    gameToolBar->setIconSize(QSize(32, 32));
-    // QAction with iconSize 32x32 appears to have default size of 35x35 (including hover background+border)
-    const int tbMargins = 5, gtbItemMargins = 3, gtbMargins = tbMargins-gtbItemMargins; // <--^ so adjust margins/spacing
-    gameToolBar->layout()->setSpacing(gtbMargins);
-    modsToolBar->layout()->setSpacing(tbMargins);
-    gameToolBar->layout()->setContentsMargins(gtbMargins, gtbMargins, gtbMargins, gtbMargins);
-    modsToolBar->layout()->setContentsMargins(tbMargins, tbMargins, tbMargins, tbMargins);
-
-        // GAME TOOLBAR WIDGETS
-        launchGameAc   = new QAction; // Default visual margin == gtbItemMargins
-        launchEditorAc = new QAction;
-        gameToolBar->addAction(launchGameAc);
-        gameToolBar->addAction(launchEditorAc);
-
-        gameToolBar->addSeparator();
-
-        QWidget *regTools = new QWidget;
-        gameToolBar->addWidget(regTools);
-        QVBoxLayout *regLayout = new QVBoxLayout;
-        regTools->setLayout(regLayout);
-        regLayout->setSpacing(0);
-        regLayout->setContentsMargins(gtbItemMargins, gtbItemMargins, gtbItemMargins, gtbItemMargins);
-
-            allowFilesCbx  = new QCheckBox(d::ALLOW_aLOCAL_FILES);
-            gameVersionCbx = new QCheckBox(d::aX.arg(d::EXPANSION));
-            regLayout->addWidget(allowFilesCbx);
-            regLayout->addWidget(gameVersionCbx);
-
-        // MODS TOOLBAR WIDGETS
-        toggleMountBtn = new QPushButton;
-        addModBtn      = new QPushButton(d::aX.arg(d::ADD_uMOD));
-        refreshBtn     = new QPushButton(d::aREFRESH);
-        modsToolBar->addWidget(toggleMountBtn);
-        modsToolBar->addWidget(addModBtn);
-        modsToolBar->addWidget(refreshBtn);
-        toggleMountBtn->setCheckable(true);
-        refreshBtn->setShortcut(QKeySequence(Qt::Key_F5));
-
-    // MOD LIST
-    modTable = new ModTable;
-    setCentralWidget(modTable);
-
-                toggleMountAc = new QAction;
-        QAction *actionOpen   = new QAction(d::OPEN_X.arg(d::FOLDER)),
-                *actionRename = new QAction(d::RENAME),
-                *actionDelete = new QAction(d::dDELETE);
-        modTable->addActions({ toggleMountAc, actionOpen, actionRename, actionDelete });
-
-    // STATUSBAR
-    setStatusBar(new QStatusBar);
-    statusBar()->setSizeGripEnabled(false);
-    statusBar()->setStyleSheet("QLabel { margin: 3; }");
-
-        statusLbl = new QLabel;
-        statusBar()->addWidget(statusLbl);
-
-    // initialize conditional UI & fetch mods
-    refresh(true);
-
-    // MESSAGES
-    connect(core,  &Core::msg, this, &MainWindow::showStatus);
-    connect(&msgr, &Msgr::msg, this, &MainWindow::showMsg);
-
-    // MENUBAR
-    connect(acOpenGameFolder, &QAction::triggered, this, &MainWindow::openGameFolder);
-    connect(acOpenModsFolder, &QAction::triggered, this, &MainWindow::openModsFolder);
-    connect(acOpenShortcuts,  &QAction::triggered, this, &MainWindow::openShortcuts);
-    connect(acOpenSettings,   &QAction::triggered, this, &MainWindow::openSettings);
-    connect(acOpenAbout,      &QAction::triggered, this, &MainWindow::openAbout);
-    // TOOLBAR
-    connect(launchGameAc,   SIGNAL(triggered()),   core, SLOT(launch()));
-    connect(launchEditorAc, &QAction::triggered,   this, &MainWindow::launchEditor);
-    connect(allowFilesCbx,  SIGNAL(toggled(const bool)), SLOT(setAllowOrVersion(const bool)));
-    connect(gameVersionCbx, &QCheckBox::toggled,   this, &MainWindow::setVersion);
-    connect(addModBtn,      &QPushButton::clicked, this, &MainWindow::addMod);
-    connect(refreshBtn,     SIGNAL(clicked()),           SLOT(refresh()));
-    // MOD LIST
-    connect(actionOpen,   &QAction::triggered, this, &MainWindow::openModFolder);
-    connect(actionRename, &QAction::triggered, this, &MainWindow::renameMod);
-    connect(actionDelete, &QAction::triggered, this, &MainWindow::deleteMod);
-}
-
-void MainWindow::show()
-{
-    QMainWindow::show();
-    showMsg(d::READY_, Msgr::Permanent);
-    core->closeSplash(this);
-}
-
-void MainWindow::showStatus(const QString &msg, const Msgr::Type &msgType)
-{
-    if(statusLbl && (msgType == Msgr::Permanent || msgType == Msgr::Critical))
-        statusLbl->setText(msg);
-
-    statusBar()->showMessage(msg, msgType == Msgr::Busy ? 0 : 10000);
-}
-
-void MainWindow::showMsg(const QString &msg, const Msgr::Type &msgType)
-{
-    showStatus(msg, msgType);
-    core->showMsg(msg, msgType, false);
-}
-
-bool MainWindow::tryBusy(const QString &modName)
-{
-    const bool exists = md::exists(modTable->modData, modName);
-    if(!exists || !md::busy(modTable->modData[modName]))
-    {
-        if(exists) std::get<int(md::Busy)>(modTable->modData[modName]) = true;
-        return true;
-    }
-    else
-    {
-        showMsg(d::X_BUSY.arg(modName), Msgr::Info);
-        return false;
-    }
-}
-
-bool MainWindow::isExternal(const QString &modName)
-{
-    const QFileInfo &fiMod(core->cfg.pathMods+"/"+modName);
-    return modName == md::unknownMod || (!fiMod.isSymLink() && !fiMod.exists());
-}
-
-void MainWindow::updateLaunchBtns()
-{
-    launchGameAc->setEnabled(false);
-    launchEditorAc->setEnabled(false);
-
-    const bool modEnabled = !core->mountedMod.isEmpty(),
-               exp = gameVersionCbx->isChecked();
-    
-    launchGameAc->setIcon(gameIcons[size_t(modEnabled<<1)|exp]);
-    launchGameAc->setToolTip(d::LAUNCH_X.arg(modEnabled ? core->mountedMod+" ("+(exp ? d::EXPANSION : d::CLASSIC)+")"
-                                                        : exp ? d::TFT : d::ROC));
-    launchEditorAc->setIcon(editIcons[modEnabled]);
-    launchEditorAc->setToolTip(d::LAUNCH_X.arg(d::WE)+(modEnabled ? " ("+core->mountedMod+")"
-                                                                  : QString()));
-
-    launchGameAc->setEnabled(true);
-    launchEditorAc->setEnabled(true);
-}
-
-void MainWindow::updateAllowOrVersion(const bool version)
-{
-    if(version) gameVersionCbx->setEnabled(false);
-    else allowFilesCbx->setEnabled(false);
-
-    HKEY hKey;
-    if(!Config::regOpenWC3(KEY_READ, hKey)) showMsg(d::FAILED_TO_OPEN_REGK_, Msgr::Error);
-    else
-    {
-        DWORD type = REG_DWORD, size = 1024, value;
-        LSTATUS result = RegQueryValueEx(hKey, version ? Core::regGameVersion : Core::regAllowFiles,
-                                         nullptr, &type, LPBYTE(&value), &size);
-
-        if(result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND) // ERROR_FILE_NOT_FOUND: value does not exist
-            showMsg(d::FAILED_TO_GET_X_.arg(version ? d::GAME_VERSION : d::X_SETTING.arg(d::ALLOW_FILES)), Msgr::Error);
-
-        else if(version) gameVersionCbx->setChecked(QString::number(value) == Config::vOn);
-        else             allowFilesCbx->setChecked(QString::number(value) == Config::vOn);
-    }
-
-    RegCloseKey(hKey);
-
-    updateLaunchBtns();
-    if(version) gameVersionCbx->setEnabled(true);
-    else allowFilesCbx->setEnabled(true);
-}
-
-void MainWindow::updateMountState(const QString &modName, const bool enableBtn)
-{
-    if(enableBtn) toggleMountBtn->setEnabled(false);
-
-    disconnect(toggleMountBtn, &QPushButton::clicked, this, &MainWindow::unmountMod);
-    disconnect(toggleMountBtn, &QPushButton::clicked, this, &MainWindow::mountMod);
-    disconnect(toggleMountAc,  &QAction::triggered,   this, &MainWindow::unmountMod);
-    disconnect(toggleMountAc,  &QAction::triggered,   this, &MainWindow::mountMod);
-
-    if(core->mountedMod.isEmpty())
-    {
-        toggleMountAc->setText(d::aX.arg(d::MOUNT));
-        toggleMountBtn->setText(d::aX.arg(d::MOUNT));
-        toggleMountBtn->setToolTip(QString());
-        toggleMountBtn->setChecked(false);
-        connect(toggleMountBtn, &QPushButton::clicked, this, &MainWindow::mountMod);
-        connect(toggleMountAc,  &QAction::triggered,   this, &MainWindow::mountMod);
-
-        if(!modName.isEmpty() && md::exists(modTable->modData, modName))
-        {
-            const int row = modTable->row(modName);
-
-            QWidget *nameItem  = modTable->cellWidget(row, 0),
-                    *sizeItem  = modTable->cellWidget(row, 1),
-                    *filesItem = modTable->cellWidget(row, 2);
-            if(nameItem->styleSheet() != QString())
-            {
-                nameItem->setStyleSheet(QString());
-                sizeItem->setStyleSheet(QString());
-                filesItem->setStyleSheet(QString());
-                nameItem->setFont(modTable->font());
-                sizeItem->setFont(modTable->font());
-                filesItem->setFont(modTable->font());
-
-                modTable->resizeCR(row);
-            }
-        }
-    }
-    else
-    {
-        toggleMountAc->setText(d::UNaMOUNT);
-        toggleMountBtn->setText(d::UNaMOUNT);
-        toggleMountBtn->setToolTip(d::UNMOUNT+" "+core->mountedMod);
-        toggleMountBtn->setChecked(true);
-        connect(toggleMountBtn, &QPushButton::clicked, this, &MainWindow::unmountMod);
-        connect(toggleMountAc,  &QAction::triggered,   this, &MainWindow::unmountMod);
-
-        if(md::exists(modTable->modData, modName.isEmpty() ? core->mountedMod : modName))
-        {
-            const int row = modTable->row(modName.isEmpty() ? core->mountedMod : modName);
-
-            QWidget *nameItem  = modTable->cellWidget(row, 0),
-                    *sizeItem  = modTable->cellWidget(row, 1),
-                    *filesItem = modTable->cellWidget(row, 2);
-
-            if(nameItem->styleSheet() == QString())
-            {
-                const QString &style = "border: 2px dashed #f7f500; background-color: #555; color: #eee;";
-
-                nameItem->setStyleSheet(style+"border-right: 0;");
-                sizeItem->setStyleSheet(style+"border-left: 0; border-right: 0;");
-                filesItem->setStyleSheet(style+"border-left: 0;");
-                nameItem->setFont(modTable->font());
-                sizeItem->setFont(modTable->font());
-                filesItem->setFont(modTable->font());
-                
-                modTable->resizeCR(row);
-            }
-        }
-    }
-
-    if(!modName.isEmpty()) modTable->setFocus();
-    updateLaunchBtns();
-    if(enableBtn) toggleMountBtn->setEnabled(true);
-}
-
-void MainWindow::launchEditor() { core->launch(true); }
-
-void MainWindow::setAllowOrVersion(const bool enable, const bool version)
-{
-    if(core->setAllowOrVersion(enable, version)) updateLaunchBtns();
-    else updateAllowOrVersion(version);
-}
-
-void MainWindow::refresh(const bool silent)
-{
-    refreshBtn->setEnabled(false);
-
-    refreshing = !silent;
-    if(!silent) showMsg(d::REFRESHING___, Msgr::Busy);
-
-    core->mountedMod = core->getMounted();
-    
-    Thread *thr = new Thread(ThreadAction::ModData, QString(), core->cfg.pathMods);
-    connect(thr, &Thread::modDataReady, this, &MainWindow::scanMods);
-    thr->start(modTable->modData, core->mountedMod);
-
-    updateAllowOrVersion();
-    updateAllowOrVersion(true);
-}
-
-void MainWindow::scanMods(const md::modData &modData, const QStringList &modNames)
-{
-    const QString &selectedMod = modTable->modSelected() && modTable->currentRow() < modTable->modNames.length()
-                                    ? modTable->modNames[modTable->currentRow()] : QString();
-    int selectedRow = -1;
-    bool mountedFound = core->mountedMod.isEmpty();
-
-    modTable->setRowCount(0);
-    modTable->modData = modData;
-    modTable->modNames = modNames;
-    scanCount = modTable->modNames.length();
-
-    for(const QString &modName : modTable->modNames)
-    {
-        const int row = modTable->rowCount();
-        bool externalMod = false;
-
-        modTable->addMod(modName, row);
-
-        if(modName == selectedMod) selectedRow = row;
-
-        if(mountedFound || modName != core->mountedMod)
-        {
-            if(core->cfg.getSetting(Config::kHideEmpty) == Config::vOn) modTable->hideRow(row);
-        }
-        else
-        {
-            mountedFound = true;
-
-            if(selectedRow == -1) selectedRow = row;
-            
-            const QString &modPath = core->cfg.getSetting(Config::kGamePath)+"/"+md::w3mod;
-            const QFileInfo &fiMounted(modPath);
-            
-            externalMod = fiMounted.absolutePath() != core->cfg.pathMods;
-            if(externalMod)
-            {
-                if(fiMounted.exists() && fiMounted.isDir())
+                if(modName.toStdString() != config->getSetting("Mounted"))
                 {
-                    Thread *thr = new Thread(ThreadAction::ScanEx, modName);
-                    connect(thr, &Thread::scanModUpdate, modTable, &ModTable::updateMod);
-                    connect(thr, &Thread::scanModReady,  this,     &MainWindow::scanModDone);
-                    thr->start(fiMounted.isSymLink() ? fiMounted.symLinkTarget() : modPath);
+                    Controller *c = new Controller(this, "Scanning", modName);
+                    connect(c->worker, &Worker::scanModUpdate, this, &MainWindow::scanModUpdate);
+                    emit c->scanMod(row);
                 }
-                else scanModDone(modName);
+                else
+                {
+                    if(config->getSetting("MountedError") != "")
+                    {
+                        QStringList errorList = QString::fromStdString(config->getSetting("MountedError")).split(";", QString::SkipEmptyParts);
+                        if(errorList.size() > 0)
+                        {
+                            QString errorString = "Warning:";
+                            for(int i=0; i < errorList.size(); i++)
+                                if(i == 0 || errorList.at(i) != errorList.at(i-1))
+                                    errorString += "\n("+QString::number(i+1)+") "+errorList.at(i);
+
+                            ui->modList->item(row, 0)->setIcon(warningIcon);
+                            ui->modList->item(row, 0)->setToolTip(errorString);
+                        }
+                    }
+
+                    ui->modList->resizeColumnToContents(0);
+
+                    if(selectedRow >= 0 && selectedRow < ui->modList->rowCount())
+                    {
+                        ui->modList->scrollToItem(ui->modList->item(selectedRow, 0));
+                        ui->modList->setFocus();
+                    }
+                }
+            }
+
+            if(selectedRow >= 0 && selectedRow < ui->modList->rowCount())
+                ui->modList->selectRow(selectedRow);
+            else if(config->getSetting("Mounted") != "")
+            {
+                if(QDir().mkdir(QString::fromStdString(config->modPath)+"/"+selectedMod))
+                {
+                    refresh(statusMsg, selectedMod);
+                    return;
+                }
+                else statusMsg = "Failed to create folder for "+selectedMod+".";
             }
         }
 
-        if(!externalMod)
-        {
-            Thread *thr = new Thread(ThreadAction::Scan, modName, core->cfg.pathMods);
-            connect(thr, &Thread::scanModUpdate, modTable, &ModTable::updateMod);
-            connect(thr, &Thread::scanModReady,  this,     &MainWindow::scanModDone);
-            thr->start();
-        }
+        getMount();
     }
 
-    if(selectedRow >= 0 && selectedRow < modTable->rowCount()) modTable->selectRow(selectedRow);
-
-    if(!core->mountedMod.isEmpty() && !mountedFound)
-        showMsg(d::FAILED_TO_FIND_MOUNTED_X_.arg(core->mountedMod), Msgr::Critical);
-
-    updateMountState();
+    if(statusMsg == "")
+    {
+        if(!shortcutMode) status("WC3 Mod Manager refreshed.");
+    }
+    else status(statusMsg);
 }
 
-void MainWindow::scanModDone(const QString &modName)
+void MainWindow::scanModUpdate(QString modSize, QString fileCount, int row)
 {
-    if(md::exists(modTable->modData, modName))
+    if(modSize != "0 MB") ui->modList->item(row, 1)->setText(modSize);
+    if(fileCount != "0 files") ui->modList->item(row, 2)->setText(fileCount);
+    if(ui->modList->isRowHidden(row) && (fileCount != "0 files" || modSize != "0 MB" || config->getSetting("hideEmptyMods") != "1"))
     {
-        const int row = modTable->row(modName);
-
-        if(row == modTable->currentRow())
-        modTable->setFocus();
-    }
-
-    if(--scanCount <= 0)
-    {
-        refreshBtn->setEnabled(true);
-        if(refreshing)
-        {
-            refreshing = false;
-            showMsg(d::REFRESHED_);
-        }
+        ui->modList->showRow(row);
+        ui->modList->resizeColumnToContents(0);
+        ui->modList->scrollToItem(ui->modList->item(ui->modList->currentRow(), 0));
+        ui->modList->setFocus();
     }
 }
 
-void MainWindow::mountMod()
+void MainWindow::launchGame()
 {
-    if(!modTable->modSelected()) showMsg(d::SELECT_MOD_TO_MOUNT_, Msgr::Info);
+    refresh("Launching game...", "", false);
+    if (ui->gameVersionCbx->isChecked())
+    {
+        if(QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QString::fromStdString(config->getSetting("GamePath"))+"/Frozen Throne.exe")))
+        {
+            status("Game launched.");
+            if(shortcutMode) emit shortcutQuit();
+        }
+        else status("Failed to launch Frozen Throne.exe", true);
+    }
     else
     {
-        const QString &modName = modTable->modNames[modTable->currentRow()];
-
-        if(tryBusy(modName) && core->mountModCheck(modName) == Core::MountReady)
+        if(QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QString::fromStdString(config->getSetting("GamePath"))+"/Warcraft III.exe")))
         {
-            toggleMountBtn->setEnabled(false);
+            status("Game launched.");
+            if(shortcutMode) emit shortcutQuit();
+        }
+        else status("Failed to launch Warcraft III.exe", true);
+    }
+}
 
-            core->mountedMod = modName;
-            Thread *thr = core->mountModThread(modName);
-            connect(thr, &Thread::resultReady, this, &MainWindow::actionDone);
-            thr->start();
+void MainWindow::launchEditor()
+{
+    refresh("Launching editor...", "", false);
+    if(QDesktopServices::openUrl(QUrl::fromLocalFile(
+            QString::fromStdString(config->getSetting("GamePath"))+"/World Editor.exe")))
+    {
+        status("Editor launched.");
+        if(shortcutMode) emit shortcutQuit();
+    }
+    else status("Failed to launch World Editor.exe", true);
+}
+
+void MainWindow::setLaunchIcons()
+{
+    if(ui->allowFilesCbx->isChecked() && config->getSetting("Mounted") != "")
+    {
+        if(ui->gameVersionCbx->isChecked()) ui->gameBtn->setIcon(war3xmod);
+        else ui->gameBtn->setIcon(war3mod);
+        ui->editorBtn->setIcon(worldeditmod);
+    }
+    else
+    {
+        if(ui->gameVersionCbx->isChecked()) ui->gameBtn->setIcon(war3x);
+        else ui->gameBtn->setIcon(war3);
+        ui->editorBtn->setIcon(worldedit);
+    }
+}
+
+void MainWindow::setAllowFiles(QString alwFls)
+{
+    DWORD allowFiles = alwFls == "0" ? 0 : alwFls == "1" ? 1 : ui->allowFilesCbx->isChecked() ? 1 : 0;
+
+    if(utils::regSet(L"Allow Local Files", allowFiles))
+    {
+        if(allowFiles == 1) status("Allow Local Files enabled.");
+        else status("Allow Local Files disabled.");
+    }
+    else status("Failed to set Allow Local Files.", true);
+
+    if(!shortcutMode) getAllowFiles();
+}
+
+void MainWindow::getAllowFiles()
+{
+    std::string allowFiles = utils::regGet(L"Allow Local Files", REG_DWORD);
+
+    if(allowFiles=="0") ui->allowFilesCbx->setChecked(false);
+    else if(allowFiles=="1") ui->allowFilesCbx->setChecked(true);
+    else status("Failed to get Allow Local Files setting.");
+    setLaunchIcons();
+}
+
+void MainWindow::setGameVersion(QString gVrs)
+{
+    DWORD gameVersion = gVrs == "0" ? 0 : gVrs == "1" ? 1 : ui->gameVersionCbx->isChecked() ? 1 : 0;
+
+    if(utils::regSet(L"Preferred Game Version", gameVersion))
+    {
+        if(gameVersion == 1) status("Expansion enabled.");
+        else status("Expansion disabled.");
+    }
+    else status("Failed to set Preferred Game Version.", true);
+
+    if(!shortcutMode) getGameVersion();
+}
+
+void MainWindow::getGameVersion()
+{
+    std::string gameVersion = utils::regGet(L"Preferred Game Version", REG_DWORD);
+
+    if(gameVersion == "0") ui->gameVersionCbx->setChecked(false);
+    else if(gameVersion == "1") ui->gameVersionCbx->setChecked(true);
+    else status("Failed to get Preferred Game Version.");
+
+    setLaunchIcons();
+}
+
+void MainWindow::mountMod(QString modSize, QString fileCount)
+{
+    bool mounting = false;
+    if(!shortcutMode)
+    {
+        ui->toggleMountBtn->setEnabled(false);
+        ui->modList->setEnabled(false);
+        ui->gameBtn->setEnabled(false);
+        ui->editorBtn->setEnabled(false);
+    }
+
+    if(config->getSetting("Mounted") == "")
+    {
+        if(shortcutMode || modSelected())
+        {
+            std::string gamePath = config->getSetting("GamePath");
+            int iSelectedMod = 0;
+            QString selectedMod;
+            if(shortcutMode) selectedMod = tmpModName;
+            else
+            {
+                iSelectedMod = ui->modList->currentRow();
+                selectedMod = ui->modList->item(iSelectedMod, 0)->text();
+            }
+
+            status("Mounting "+selectedMod+"...");
+
+            if(QFileInfo(QString::fromStdString(gamePath)).isDir())
+            {
+                if(!shortcutMode)
+                {
+                    modSize = ui->modList->item(iSelectedMod, 1)->text();
+                    fileCount = ui->modList->item(iSelectedMod, 2)->text();
+
+                }
+                config->setSetting("Mounted", selectedMod.toStdString());
+                config->setSetting("MountedSize", modSize.toStdString());
+                config->setSetting("MountedCount", fileCount.toStdString());
+                config->saveConfig();
+
+                Controller *c = new Controller(this, "Mounting", selectedMod);
+                connect(c->worker, &Worker::resultReady, this, &MainWindow::mountModReady);
+                emit c->mountMod();
+                mounting = true;
+            }
+            else status("Invalid Warcraft III folder.", true);
+        }
+        else status("Select a mod to mount.");
+    } else
+    {
+        status("Already mounted: "+QString::fromStdString(config->getSetting("Mounted")));
+        if(shortcutMode) unmountMod();
+    }
+
+    if(!mounting && !shortcutMode) getMount(true);
+}
+
+void MainWindow::mountModReady(QString modName, int success, int failed, int missing, bool abort)
+{
+    bool scanMods = false,
+         errors = true;
+    if(success > 0)
+    {
+        if(abort || failed+missing > 0)
+        {
+            scanMods = true;
+            config->setSetting("MountedError", result2errorMsg("Mounting", success, failed, missing, abort));
+            config->saveConfig();
+        }
+        else errors = false;
+    }
+    else
+    {
+        config->deleteSetting("Mounted");
+        config->deleteSetting("MountedSize");
+        config->deleteSetting("MountedCount");
+        config->deleteSetting("MountedError");
+        config->saveConfig();
+    }
+
+    QString statusMsg = result2statusMsg(modName, "Mounting", success, failed, missing, abort);
+    refresh(statusMsg, modName, scanMods);
+
+    if(shortcutMode)
+    {
+        if(errors && QMessageBox::warning(splash, "Launch game?",
+                        QString(abort ? "Mounting aborted: " : "Errors occurred while mounting: ")
+                            +statusMsg
+                            +"\nDo you want to continue launching the game?",
+                        QMessageBox::Yes|QMessageBox::No)
+           == QMessageBox::No)
+        {
+            emit shortcutQuit();
+            return;
         }
 
-        updateMountState(modName, false);
+        if(shortcutEditor) launchEditor();
+        else launchGame();
     }
 }
 
 void MainWindow::unmountMod()
 {
-    if(tryBusy(core->mountedMod) && core->unmountModCheck())
+    if(!shortcutMode)
     {
-        toggleMountBtn->setEnabled(false);
-
-        Thread *thr = core->unmountModThread();
-        connect(thr, &Thread::resultReady, this, &MainWindow::actionDone);
-        thr->start();
+        ui->toggleMountBtn->setEnabled(false);
+        ui->gameBtn->setEnabled(false);
+        ui->editorBtn->setEnabled(false);
     }
-    else updateMountState(core->mountedMod);
+
+    if(config->getSetting("Mounted") != "")
+    {
+        status("Unmounting "+QString::fromStdString(config->getSetting("Mounted"))+"...");
+
+        Controller *c = new Controller(this, "Unmounting", QString::fromStdString(config->getSetting("Mounted")));
+        connect(c->worker, &Worker::resultReady, this, &MainWindow::unmountModReady);
+        emit c->unmountMod();
+    }
+    else
+    {
+        status("No mod mounted.");
+
+        if(shortcutMode) shortcutMountMod();
+        else getMount(true);
+    }
+}
+
+void MainWindow::unmountModReady(QString modName, int success, int failed, int missing, bool abort, bool force)
+{
+    bool unmounted = false;
+    if(!force && (abort || failed+missing > 0))
+    {
+        std::string errorMsg = result2errorMsg("Unmounting", success, failed, missing, abort, force);
+        if(config->getSetting("MountedError") != "") errorMsg = config->getSetting("MountedError")+";"+errorMsg;
+        config->setSetting("MountedError", errorMsg);
+    }
+    else
+    {
+        unmounted = true;
+        config->deleteSetting("Mounted");
+        config->deleteSetting("MountedSize");
+        config->deleteSetting("MountedCount");
+        config->deleteSetting("MountedError");
+    }
+
+    config->saveConfig();
+
+    QString statusMsg = result2statusMsg(modName, "Unmounting", success, failed, missing, abort, force);
+    refresh(statusMsg, modName, unmounted);
+
+    if(shortcutMode)
+    {
+        if(unmounted) shortcutMountMod();
+        else if(QMessageBox::warning(splash, "Try again?",
+                            "Unmounting "+QString(abort ? "failed: " : "aborted: ")
+                                +statusMsg
+                                +"\nDo you want to try again?",
+                            QMessageBox::Yes|QMessageBox::No)
+                == QMessageBox::Yes) unmountMod();
+        else emit shortcutQuit();
+    }
+}
+
+void MainWindow::getMount(bool setFocus)
+{
+    disconnect(ui->toggleMountBtn, SIGNAL(clicked()), this, SLOT(unmountMod()));
+    disconnect(ui->toggleMountBtn, SIGNAL(clicked()), this, SLOT(mountMod()));
+
+    if(config->getSetting("Mounted") == "")
+    {
+        ui->toggleMountBtn->setText("&Mount");
+        ui->modList->setStyleSheet("");
+        ui->modList->setEnabled(true);
+        if(setFocus) ui->modList->setFocus();
+        connect(ui->toggleMountBtn, SIGNAL(clicked()), this, SLOT(mountMod()));
+    }
+    else
+    {
+        ui->toggleMountBtn->setText("Un&mount");
+        ui->modList->setStyleSheet( QString("QTableWidget::item:selected { border: 2px dashed #bcbe00;")
+                                   +"border-top-color: #f7f500; border-bottom-color: #f7f500;"
+                                   +"color: #eee; background-color: #555; }");
+        ui->modList->setEnabled(false);
+
+        connect(ui->toggleMountBtn, SIGNAL(clicked()), this, SLOT(unmountMod()));
+    }
+
+    ui->toggleMountBtn->setEnabled(true);
+    setLaunchIcons();
+    ui->gameBtn->setEnabled(true);
+    ui->editorBtn->setEnabled(true);
 }
 
 void MainWindow::addMod()
 {
-    const QString &src = QFileDialog::getExistingDirectory(this, d::ADD_uMOD, QString(),
-                                                           QFileDialog::ShowDirsOnly|QFileDialog::HideNameFilterDetails);
+    status("Adding mod...");
+    QString folder = QFileDialog::getExistingDirectory(this, "Add Mod", "",
+                                                        QFileDialog::ShowDirsOnly | QFileDialog::HideNameFilterDetails);
 
-    if(!src.isEmpty())
+    if(folder != "")
     {
         QMessageBox copyMove(this);
-        copyMove.setWindowTitle(d::COPY_MOVEq);
-        copyMove.setText(d::COPY_MOVE_LONGq+"\n"+src);
-        copyMove.addButton(d::MOVE, QMessageBox::ActionRole);
-        QPushButton *copyBtn = copyMove.addButton(d::COPY, QMessageBox::ActionRole);
+        copyMove.setWindowTitle("Copy or move?");
+        copyMove.setText("Do you want to copy or move this folder?\n"+folder);
+        copyMove.addButton("Move", QMessageBox::ActionRole); //btn index: 0 (== PROCFILE_MOVE)
+        copyMove.addButton("Copy", QMessageBox::ActionRole); //btn index: 1 (== PROCFILE_COPY)
         copyMove.addButton(QMessageBox::Cancel);
-        copyMove.setIcon(QMessageBox::Question);
+        copyMove.setIcon(QMessageBox::Warning);
 
-        copyMove.exec();
+        int result = copyMove.exec();
 
-        if(copyMove.clickedButton() != copyMove.button(QMessageBox::Cancel))
+        if(result == PROCFILE_MOVE || result == PROCFILE_COPY)
         {
-            const QString &modName = QDir(src).dirName(),
-                          &dst     = core->cfg.pathMods+"/"+modName;
-
-            if(QFileInfo().exists(dst)) showMsg(d::MOD_EXISTS_, Msgr::Error);
-            else
+            QString modName = QDir(folder).dirName(),
+                    newFolder = QString::fromStdString(config->modPath)+"/"+modName;
+            if(!QDir(newFolder).exists())
             {
-                showMsg(d::ADDING_X___.arg(modName), Msgr::Busy);
+                status("Adding "+modName+"...");
 
-                Thread *thr = new Thread(ThreadAction::Add, modName, core->cfg.pathMods, core->cfg.getSetting(Config::kGamePath));
-                connect(thr, &Thread::resultReady,   this,     &MainWindow::actionDone);
-                connect(thr, &Thread::modAdded, modTable, &ModTable::addMod);
-                connect(thr, &Thread::scanModUpdate, modTable, &ModTable::updateMod);
-                thr->start(src, dst, copyMove.clickedButton() == copyBtn);
+                Controller *c = new Controller(this, "Adding", modName);
+                connect(c->worker, &Worker::resultReady, this, &MainWindow::addModReady);
+                emit c->moveFolder(folder, newFolder, result);
             }
+            else status("A mod with that name already exists.", true);
         }
     }
+}
+
+void MainWindow::addModReady(QString modName, int success, int failed, int missing, bool abort)
+{
+    refresh(result2statusMsg(modName, "Adding", success, failed, missing, abort), modName);
+}
+
+void MainWindow::openModFolder()
+{
+    QString path = QString::fromStdString(config->modPath);
+    QString modName = "Mods";
+
+    if(modSelected())
+    {
+        QString modName = ui->modList->item(ui->modList->currentRow(), 0)->text();
+        path += "/"+modName;
+    }
+
+    status("Opening "+modName+" folder...");
+
+    if(QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
+        status(modName+" folder opened.");
+    else status("Failed to open "+modName+" folder.");
+}
+
+void MainWindow::renameModAction()
+{
+    if(modSelected()) renameModStart(ui->modList->item(ui->modList->currentRow(), 0));
+}
+
+void MainWindow::renameModStart(QTableWidgetItem *item)
+{
+    if(item->column() != 0) item = ui->modList->item(item->row(), 0);
+    tmpModName = item->text();
+    renameModItem = item;
+    connect(ui->modList, SIGNAL(itemChanged(QTableWidgetItem*)), this, SLOT(renameModSave(QTableWidgetItem*)));
+    ui->modList->editItem(item);
+}
+
+void MainWindow::renameModSave(QTableWidgetItem *item)
+{
+    disconnect(ui->modList, SIGNAL(itemChanged(QTableWidgetItem*)), this, SLOT(renameModSave(QTableWidgetItem*)));
+
+    QString statusMsg = "";
+    QString selectedMod = tmpModName;
+    if(item == renameModItem)
+    {
+        QString qsModPath = QString::fromStdString(config->modPath);
+        if(QFileInfo(qsModPath+"/"+tmpModName).isDir())
+        {
+            QString newModName = item->text();
+            if(!QDir().rename(qsModPath+"/"+tmpModName, qsModPath+"/"+newModName))
+                statusMsg = "Failed to rename mod.";
+            else
+            {
+                selectedMod = newModName;
+                statusMsg = tmpModName+" renamed to "+newModName+".";
+            }
+        }
+        else statusMsg = "Mod not found.";
+    }
+    else statusMsg = "Saving wrong item.";
+
+    tmpModName = "";
+    renameModItem = nullptr;
+    refresh(statusMsg, selectedMod);
 }
 
 void MainWindow::deleteMod()
 {
-    if(!modTable->modSelected()) showMsg(d::NO_MOD_X_.arg(d::lSELECTED));
+    if(modSelected())
+    {
+        QString qsModName = ui->modList->item(ui->modList->currentRow(), 0)->text();
+
+        if(QMessageBox::warning(this, "Permanently delete "+qsModName+"?",
+                "Are you sure you want to PERMANENTLY delete "+qsModName+" ("
+               +ui->modList->item(ui->modList->currentRow(), 1)->text()+" / "
+               +ui->modList->item(ui->modList->currentRow(), 2)->text()+")?",
+                QMessageBox::Yes|QMessageBox::No) == QMessageBox::Yes)
+        {
+            status("Deleting "+qsModName+"...");
+
+            Controller *c = new Controller(this, "Deleting", qsModName);
+            connect(c->worker, &Worker::resultReady, this, &MainWindow::deleteModReady);
+            emit c->deleteMod();
+        }
+    }
+}
+
+void MainWindow::deleteModReady(QString modName, int success, int failed, int missing, bool abort)
+{
+    refresh(result2statusMsg(modName, "Deleting", success, failed, missing, abort), modName);
+}
+
+bool MainWindow::modSelected()
+{
+    if(ui->modList->currentRow() < 0 || ui->modList->currentRow() >= ui->modList->rowCount())
+    {
+        status("No mod selected.");
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::status(QString msg, bool warning)
+{
+    if(splash) splash->statusBar()->showMessage(msg);
+    else ui->statusBarLbl->setText(msg);
+    if(warning) QMessageBox::warning(activeWindow(), "Error", msg);
+}
+
+QString MainWindow::result2statusMsg(QString modName, QString action,
+                                         int success, int failed, int missing, bool abort, bool force)
+{
+    std::map<QString, QString> dict = action_dict(action);
+    QString statusMsg,
+           pAction = dict.find("pAction")->second,
+           cAction = dict.find("cAction")->second;
+    int totErrors = failed+missing;
+
+    if(abort) statusMsg = action+" "+modName+": aborted.";
+    else if((force && totErrors > 0) || (success > 0 && !(action == "Unmounting" && totErrors > 0)))
+        statusMsg = modName+" "+pAction+".";
+    else if(totErrors > 0) statusMsg = "Failed to "+cAction+" "+modName+".";
+    else statusMsg = "No files to "+cAction+".";
+
+    if(abort || totErrors > 0)
+    {
+        statusMsg += " ["+QString::number(success)+" files "+pAction;
+        if(failed > 0) statusMsg += ", "+QString::number(failed)+" files failed";
+        if(missing > 0) statusMsg += ", "+QString::number(missing)+" files missing";
+        statusMsg += "]";
+    }
+
+    return statusMsg;
+}
+
+std::string MainWindow::result2errorMsg(std::string action,int success, int failed, int missing, bool abort, bool force)
+{
+    std::map<QString, QString> dict = action_dict(QString::fromStdString(action));
+    std::string errorMsg,
+           pAction = dict.find("pAction")->second.toStdString(),
+           cAction = dict.find("cAction")->second.toStdString(),
+           pAction_c = dict.find("pAction_c")->second.toStdString();
+    int totErrors = failed+missing;
+
+    if(abort) errorMsg = action+" aborted";
+    else if(force) "Force "+cAction;
+    else if(success > 0 && !(action == "Unmounting" && totErrors > 0))
+        errorMsg = pAction_c;
+    else if(totErrors > 0) errorMsg = action+" failed";
+    else errorMsg = "No files to "+cAction;
+
+    errorMsg += ": "+utils::i2s(success)+" files "+pAction;
+    if(failed > 0) errorMsg += ", "+utils::i2s(failed)+" files failed";
+    if(missing > 0) errorMsg += ", "+utils::i2s(missing)+" files missing";
+
+    return errorMsg;
+}
+
+std::map<QString, QString> MainWindow::action_dict(QString action)
+{
+    if(action == "Mounting")
+        return {
+            { "pAction", "mounted" },
+            { "pAction_c", "Mounted" },
+            { "cAction", "mount" }
+        };
+    else if(action == "Unmounting")
+        return {
+            { "pAction", "unmounted" },
+            { "pAction_c", "Unmounted" },
+            { "cAction", "unmount" }
+        };
+    else if(action == "Adding")
+        return {
+            { "pAction", "added" },
+            { "pAction_c", "Added" },
+            { "cAction", "add" }
+        };
+    else if(action == "Deleting")
+        return {
+            { "pAction", "deleted" },
+            { "pAction_c", "Deleted" },
+            { "cAction", "delete" }
+        };
     else
+        return {
+            { "pAction", "processed" },
+            { "pAction_c", "Processed" },
+            { "cAction", "process" }
+        };
+}
+
+MainWindow::~MainWindow()
+{
+    delete ui;
+    delete config;
+    if(splash) delete splash;
+    if(settings) delete settings;
+    if(about) delete about;
+    if(renameModItem) delete renameModItem;
+}
+
+void MainWindow::shortcutLaunch(QString mod, QString gameVersion, bool editor)
+{
+    if(gameVersion == "0" || gameVersion == "1") setGameVersion(gameVersion);
+
+    if(mod != "" && mod != nullptr)
     {
-        const QString &modName = modTable->modNames[modTable->currentRow()];
-
-        if(modName == core->mountedMod)
-            showMsg(d::CANT_X_MOUNTED_.arg(d::lDELETE), Msgr::Info);
-        else if(QMessageBox::warning(this, d::PERM_DELETE_Xq.arg(modName), d::PERM_DELETE_X_LONGq.arg(modName,
-                                         modTable->cellLabel(modTable->currentRow(), 1)->text(),
-                                         modTable->cellLabel(modTable->currentRow(), 2)->text()),
-                                     QMessageBox::Yes|QMessageBox::No) == QMessageBox::Yes
-                && tryBusy(modName))
+        setAllowFiles("1");
+        if(mod.toStdString() != config->getSetting("Mounted"))
         {
-            showMsg(d::DELETING_X___.arg(modName), Msgr::Busy);
+            tmpModName = mod;
+            shortcutEditor = editor;
 
-            qint64 modSize = 0;
-            QString fileCount;
-            if(md::exists(modTable->modData, modName))
-            {
-                modSize = md::size(modTable->modData[modName]);
-                fileCount = modTable->cellLabel(modTable->row(modName), 2)->text();
-            }
+            if(config->getSetting("Mounted") != "") unmountMod();
+            else shortcutMountMod();
 
-            Thread *thr = new Thread(ThreadAction::Delete, modName, core->cfg.pathMods, core->cfg.getSetting(Config::kGamePath));
-            connect(thr, &Thread::resultReady,   this,     &MainWindow::actionDone);
-            connect(thr, &Thread::modDeleted,    modTable, &ModTable::deleteMod);
-            connect(thr, &Thread::scanModUpdate, modTable, &ModTable::updateMod);
-            thr->start(modSize, fileCount);
+            return;
         }
     }
+    else setAllowFiles("0");
+
+    if(editor) launchEditor();
+    else launchGame();
 }
 
-void MainWindow::actionDone(const ThreadAction &action)
+void MainWindow::shortcutMountMod()
 {
-    if(action == ThreadAction::Mount || action == ThreadAction::Unmount)
-    {
-        core->actionDone(action);
-        updateMountState(action.modName);
-
-        if(action == ThreadAction::Unmount)
-        {
-            const QFileInfo &fiMod(core->cfg.pathMods+"/"+action.modName);
-
-            if(isExternal(action.modName)) modTable->deleteMod(action.modName);
-        }
-    }
-    else showMsg(Core::a2s(action));
-
-    modTable->setIdle(action.modName);
+    Controller *c = new Controller(this, "Scanning", tmpModName);
+    connect(c->worker, &Worker::scanModDone, this, &MainWindow::mountMod);
+    emit c->scanMod();
 }
 
-void MainWindow::renameMod()
+QMainWindow* MainWindow::activeWindow()
 {
-    if(!modTable->modSelected()) showMsg(d::NO_MOD_X_.arg(d::lSELECTED));
-    else
-    {
-        const QString &modName = modTable->cellLabel(modTable->currentRow(), 0)->text();
-
-        if(modName == core->mountedMod) showMsg(d::CANT_X_MOUNTED_.arg(d::lRENAME), Msgr::Info);
-        else if(tryBusy(modName))
-        {
-            renameDg = new QDialog(this, Qt::MSWindowsFixedSizeDialogHint);
-            renameDg->setWindowTitle(d::RENAME+" "+modName);
-            renameDg->setFixedWidth(220);
-            QVBoxLayout *renameLayout = new QVBoxLayout;
-            renameDg->setLayout(renameLayout);
-                renameEdit = new QLineEdit(modName);
-                renameLayout->addWidget(renameEdit);
-                renameEdit->selectAll();
-                QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);
-                renameLayout->addWidget(buttonBox);
-
-            connect(renameDg,  &QDialog::rejected,          this, &MainWindow::renameModDone);
-            connect(buttonBox, &QDialogButtonBox::rejected, this, &MainWindow::renameModDone);
-            connect(buttonBox, &QDialogButtonBox::accepted, this, &MainWindow::renameModSave);
-
-            renameDg->exec();
-            delete renameDg;
-        }
-    }
+    if(splash) return splash;
+    else return this;
 }
-
-void MainWindow::renameModSave()
-{
-    const QString &newName = renameEdit->text(),
-                  &modName = modTable->cellLabel(modTable->currentRow(), 0)->text();
-
-    if(newName.isEmpty() || modName == newName) renameModDone();
-    else if(md::exists(modTable->modData, newName)) showMsg(d::MOD_EXISTS_, Msgr::Error);
-    else if(!u::isValidFileName(newName)) showMsg(d::INVALID_X.arg(d::lFILENAME)+".\n"+d::CHARACTERS_NOT_ALLOWED, Msgr::Error);
-    else if(QFile::rename(core->cfg.pathMods+"/"+modName, core->cfg.pathMods+"/"+newName))
-    {
-        modTable->renameMod(modName, newName);
-        renameModDone();
-    }
-    else showMsg(d::FAILED_TO_X_.arg(d::lRENAME+" "+modName), Msgr::Error);
-}
-
-void MainWindow::renameModDone()
-{
-    modTable->setIdle(modTable->cellLabel(modTable->currentRow(), 0)->text());
-    renameDg->close();
-}
-
-void MainWindow::openFolder(const QString &path, const QString &name, QString lName)
-{
-    if(lName.isEmpty()) lName = name;
-    showMsg(d::OPENING_X_FOLDER___.arg(lName), Msgr::Busy);
-
-    if(QDesktopServices::openUrl(QUrl::fromLocalFile(path)))
-        showMsg(d::X_FOLDER_OPENED_.arg(name));
-    else showMsg(d::FAILED_TO_X_.arg(d::lOPEN_X).arg(d::X_FOLDER).arg(lName), Msgr::Error);
-}
-
-void MainWindow::openGameFolder()
-{ openFolder(core->cfg.getSetting(Config::kGamePath), d::GAME, d::lGAME); }
-
-void MainWindow::openModsFolder()
-{ openFolder(core->cfg.pathMods, d::MODS, d::lMODS); }
-
-void MainWindow::openModFolder()
-{
-    if(modTable->modSelected())
-    {
-        const QString &modName = modTable->modNames[modTable->currentRow()];
-
-        if(isExternal(modName)) openFolder(core->cfg.getSetting(Config::kGamePath)+"/"+md::w3mod, modName);
-        else openFolder(core->cfg.pathMods+"/"+modName, modName);
-    }
-    else openModsFolder();
-}
-
-void MainWindow::openShortcuts()
-{
-    Shortcuts shortcuts(this, QStringList(), core->cfg.getSetting(Config::kGamePath), &msgr);
-    shortcuts.exec();
-}
-
-void MainWindow::openSettings()
-{
-    Settings settings(this, core->cfg, &msgr);
-    if(settings.exec()) refresh(true); //limit refresh: "request" scan in settings when hideempty changed
-}
-
-void MainWindow::openAbout()
-{
-    QDialog about(this, Qt::FramelessWindowHint|Qt::MSWindowsFixedSizeDialogHint);
-    about.setWindowTitle(d::ABOUT);
-    about.setWindowOpacity(0.9);
-    about.setFixedWidth(350);
-    about.setStyleSheet("QDialog { background-color: #000; border: 2px solid #fac805; }"
-                        "QLabel { color: #bbb; }");
-
-    QVBoxLayout aboutLayout;
-    about.setLayout(&aboutLayout);
-    aboutLayout.setContentsMargins(0, 0, 0, 0);
-    aboutLayout.setSpacing(0);
-
-        QLabel logoLbl;
-        aboutLayout.addWidget(&logoLbl);
-        logoLbl.setAlignment(Qt::AlignTop);
-        logoLbl.setFixedSize(350, 110);
-        logoLbl.setPixmap(core->pxLogo);
-        QLabel versionLbl(&about);
-        versionLbl.setAlignment(Qt::AlignHCenter);
-        versionLbl.setFixedSize(350, 13);
-        versionLbl.move(0, 83);
-        versionLbl.setPixmap(core->pxVersion);
-
-        QHBoxLayout textLayout;
-        aboutLayout.addLayout(&textLayout);
-        textLayout.setContentsMargins(2, 0, 0, 0);
-            textLayout.addItem(new QSpacerItem(40, 0, QSizePolicy::Expanding));
-
-            QGridLayout textGrid;
-            textLayout.addLayout(&textGrid);
-            textGrid.setVerticalSpacing(0);
-
-                QLabel dlLbl(d::DOWNLOADc), srcLbl(d::SOURCEc), lcnsLbl(d::LICENSEc),
-                       dlLink  ("<a style=\"color: #66f;\" href=\"https://www.hiveworkshop.com/threads/wc3-mod-manager.308948/\">"
-                                    "Hive Workshop</a>"),
-                       srcLink ("<a style=\"color: #66f;\" href=\"https://github.com/EzraZebra/WC3ModManager\">"
-                                    "GitHub</a>"),
-                       lcnsLink("<a style=\"color: #66f;\" href=\"https://www.gnu.org/licenses/gpl-3.0.html\">"
-                                    "GPLv3</a>");
-                textGrid.addWidget(&dlLbl,    0, 0);
-                textGrid.addWidget(&srcLbl,   1, 0);
-                textGrid.addWidget(&lcnsLbl,  2, 0);
-                textGrid.addItem(new QSpacerItem(35, 0, QSizePolicy::Expanding), 0, 1);
-                textGrid.addWidget(&dlLink,   0, 2);
-                textGrid.addWidget(&srcLink,  1, 2);
-                textGrid.addWidget(&lcnsLink, 2, 2);
-                QFont font("Calibri", 14);
-                dlLbl.setFont(font);
-                srcLbl.setFont(font);
-                lcnsLbl.setFont(font);
-                dlLink.setFont(font);
-                dlLink.setOpenExternalLinks(true);
-                srcLink.setFont(font);
-                srcLink.setOpenExternalLinks(true);
-                lcnsLink.setFont(font);
-                lcnsLink.setOpenExternalLinks(true);
-
-            textLayout.addItem(new QSpacerItem(0, 0, QSizePolicy::Expanding));
-
-        QDialogButtonBox closeBtn(QDialogButtonBox::Close);
-        aboutLayout.addWidget(&closeBtn);
-        closeBtn.setContentsMargins(0, 0, 12, 12);
-
-    connect(&closeBtn, &QDialogButtonBox::rejected, &about, &QDialog::reject);
-
-    about.exec();
-}
-
-/********************************************************************/
-/*      OBSOLETE - may be useful later      *************************/
-/********************************************************************
-
-    ModDataItem::ModDataItem(const int row, const QString &zero, const bool alignRight) : QFrame(),
-        zero(zero), row(row), timer(new QTimer(this))
-    {
-        timer->setSingleShot(true);
-
-        QGridLayout *layout = new QGridLayout;
-        setLayout(layout);
-        layout->setSpacing(0);
-        layout->setContentsMargins(ModTable::modItemMrgn, ModTable::modItemMrgn, ModTable::modItemMrgn, ModTable::modItemMrgn);
-
-            totalTitle   = new QLabel(d::TOTALc_);
-            totalData    = new QLabel(zero);
-            mountedTitle = new QLabel(d::MOUNTED+": ");
-            mountedData  = new QLabel(zero);
-            layout->addWidget(totalTitle,   0, 0);
-            layout->addWidget(totalData,    0, 1);
-            layout->addWidget(mountedTitle, 1, 0);
-            layout->addWidget(mountedData,  1, 1);
-            const Qt::AlignmentFlag &align = alignRight ? Qt::AlignRight : Qt::AlignLeft;
-            totalTitle->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-            mountedTitle->setSizePolicy(QSizePolicy::Maximum, QSizePolicy::Fixed);
-            totalTitle->setAlignment(align|Qt::AlignVCenter);
-            totalData->setAlignment(align|Qt::AlignVCenter);
-            mountedTitle->setAlignment(align|Qt::AlignVCenter);
-            mountedData->setAlignment(align|Qt::AlignVCenter);
-            updateView();
-
-        connect(timer, &QTimer::timeout, this, &ModDataItem::updateView);
-    }
-
-    void ModDataItem::updateData(const QString &data, const bool dataMounted)
-    {
-        if(dataMounted) mountedData->setText(data);
-        else totalData->setText(data);
-
-        const bool wantVisible = dataMounted ? (totalData->text() != data && data != zero)
-                                             : (data != mountedData->text() && mountedData->text() != zero);
-
-        if(detailsVisible != wantVisible)
-        {
-            detailsVisible = wantVisible;
-            if(!timer->isActive())
-            {
-                timer->start(1000);
-                updateView();
-            }
-        }
-    }
-
-    void ModDataItem::updateView()
-    {
-        if(totalTitle->isVisibleTo(this) != detailsVisible)
-        {
-            totalTitle->setVisible(detailsVisible);
-            mountedTitle->setVisible(detailsVisible);
-            mountedData->setVisible(detailsVisible);
-            emit viewUpdated(row);
-        }
-    }
-
- ********************************************************************/
-/********************************************************************/
-/********************************************************************/

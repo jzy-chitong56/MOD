@@ -1,36 +1,25 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "_uo_map_qs.h"
-#include <QCoreApplication>
-
-#include <windef.h>  // winbase.h needs to be
-#include <winbase.h> // preceded by windef.h
-#include <apisetcconv.h>
-#include <winreg.h>
+#include <map>
 
 class Config
 {
-         static const QChar   CFG_SEP;
-public:  static const QString vOn, vOff, kGamePath, kHideEmpty; //, kMounted, kMountedError;
+    std::string cfgPath;
+    std::map<std::string, std::string> settings;
+    std::pair<std::string, std::string> line2setting(std::string);
 
-         const QString     pathMods = QCoreApplication::applicationDirPath()+"/mods";
-private: const std::string pathCfg  = QCoreApplication::applicationDirPath().toStdString()+"/config.cfg";
+public:
+    Config();
 
-         std::unordered_map<QString, QString> settings;
+    void setSetting(std::string, std::string);
+    std::string getSetting(std::string);
+    void deleteSetting(std::string);
+    void saveConfig();
 
-public:  Config();
-
-         QString getSetting   (const QString &key)
-         { return settings.find(key) == settings.end() ? QString() : settings[key]; }
-
-         void    deleteSetting(const QString &key)
-         { if(settings.find(key) != settings.end()) settings.erase(key); }
-
-         void    saveSetting  (const QString &key, QString value);
-         void    saveConfig()  const;
-
-         static bool regOpenWC3(const REGSAM &accessMode, HKEY &hKey);
+    std::string modPath;
+    std::string outFilesPath;
+    std::string backupFilesPath;
 };
 
 #endif // CONFIG_H

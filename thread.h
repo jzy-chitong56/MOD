@@ -1,46 +1,102 @@
 #ifndef THREAD_H
 #define THREAD_H
 
-#include "_moddata.h"
-#include "threadbase.h"
-#include <QThread>
+#include "mainwindow.h"
+#include <fstream>
 
-class Msgr;
-class ProgressDiag;
+#define PROCFILE_MOVE 0
+#define PROCFILE_COPY 1
+#define PROCFILE_LINK 2
+#define PROCFILE_SUCCESS 0
+#define PROCFILE_FAILED 1
+#define PROCFILE_MISSING 2
+#define PROCFILE_BACKUP_EXT ".wmmbackup"
 
-class Thread : public ThreadBase
+namespace Ui {
+class FileStatus;
+}
+
+class FileStatus : public QDialog
 {
     Q_OBJECT
 
-               QThread        workerThread;
-               ProgressDiag   *progressDiag = nullptr;
-               ThreadAction   action;
-               bool paused=false;
+    Ui::FileStatus *ui;
 
-public:        Thread(const ThreadAction::Action &thrAction, const QString &modName, // Scan, Mount, Unmount, Add, Delete
-                      const QString &pathMods, const QString &pathGame=QString(), Msgr *const msgr=nullptr);
-               Thread(const ThreadAction::Action &thrAction, const QString &modName) // ScanEx
-                   : Thread(thrAction, modName, QString()) {}
-               Thread(const ThreadAction::Action &thrAction, Msgr *const msgr)       // Shortcut
-                   : Thread(thrAction, QString(), QString(), QString(), msgr) {}
-               
-               ~Thread();
+public:
+    explicit FileStatus(QWidget *parent = nullptr);
+    ~FileStatus();
+    void setText(QString);
+    void setInfoText(QString);
+    void addErrorText(QString);
+    void result(bool=false);
 
-               void start() { emit init(); }                                                                      // Scan, Mount, Unmount
-               void start(const md::modData &modData, const QString &mountedMod)                                  // ModData
-               { emit init(0, mountedMod, QString(), QString(), modData); }
-               void start(const QString &modPath) { emit init(0, modPath); }                                      // ScanEx
-               void start(const QString &src, const QString &dst, const bool copy) { emit init(copy, src, dst); } // Add
-               void start(const qint64 size, const QString &fileCount) { emit init(size, fileCount); }            // Delete
-               void start(const QString &dst, const QString &args, const QString &iconPath, const int iconIndex)  // Shortcut
-               { emit init(iconIndex, dst, iconPath, args); }
+private slots:
+    void abort();
+    void forceUnmountClicked();
 
-signals:       void init(const qint64 index=0, const QString &data1=QString(), const QString &data2=QString(),
-                         const QString &args=QString(), const md::modData &modData={});
+signals:
+    void forceUnmount(bool=true);
+};
 
-private slots: void abort();
-               void pause();
-               void processResult();
+class Worker : public QObject
+{
+    Q_OBJECT
+
+    Config *config;
+    QString mod;
+    std::ofstream out_files;
+    std::ofstream backup_files;
+
+    int deleteFile(QString);
+    std::array<int, 3> mountModIterator(QString, QString);
+    std::pair<int, std::string> moveFile(QString, QString, int=PROCFILE_MOVE);
+    void removePath(QString, QString="");
+
+public:
+    Worker(Config*, QString="");
+    bool abort = false;
+
+public slots:
+    void scanModWorker(int);
+    void mountModWorker();
+    void unmountModWorker(bool=false);
+    void deleteModWorker();
+    void moveFolderWorker(QString, QString, int=PROCFILE_MOVE);
+
+signals:
+    void scanModUpdate(QString, QString, int);
+    void scanModDone(QString, QString);
+    void resultReady(QString, int, int, int, bool, bool=false);
+    void status(QString, bool=false);
+    void appendAction(QString);
+};
+
+class Controller : public QObject
+{
+    Q_OBJECT
+
+    QThread workerThread;
+    QString action;
+    QString mod;
+    FileStatus *fileStatus=nullptr;
+
+public:
+    Controller(MainWindow *, QString, QString, bool=true);
+    ~Controller();
+    Worker *worker;
+
+private slots:
+    void result(QString, int, int, int, bool, bool=false);
+    void status(QString, bool=false);
+    void appendAction(QString);
+    void abort();
+
+signals:
+    void scanMod(int=0);
+    void mountMod();
+    void unmountMod(bool=false);
+    void deleteMod();
+    void moveFolder(QString, QString, int=PROCFILE_MOVE);
 };
 
 #endif // THREAD_H
