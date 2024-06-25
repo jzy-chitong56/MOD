@@ -80,7 +80,7 @@ private:       void showMsg   (const QString &msg, const Msgr::Type &msgType=Msg
                void updateMountState(const QString &modName=QString(), const bool enableBtn=true);
 private slots: void launchEditor();
                void setAllowOrVersion(const bool enable, const bool version);
-               void setVersion(const bool enable);
+               void setVersion(const bool enable){ setAllowOrVersion(true, enable); }
 
                void refresh(const bool silent=false);
                void scanMods(const md::modData &modData, const QStringList &modNames);

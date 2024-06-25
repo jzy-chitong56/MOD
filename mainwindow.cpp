@@ -442,19 +442,12 @@ void MainWindow::updateMountState(const QString &modName, const bool enableBtn)
 
 void MainWindow::launchEditor() { core->launch(true); }
 
-void MainWindow::setAllowOrVersion( bool enable, bool version)
+void MainWindow::setAllowOrVersion( bool enable,  bool version)
 {
     enable = allowFilesCbx->isChecked();
     version = gameVersionCbx->isChecked();
     if(core->setAllowOrVersion(enable, version)) updateLaunchBtns();
     else updateAllowOrVersion(version);
-}
-
-void MainWindow::setVersion( bool enable)
-{
-    enable = gameVersionCbx->isChecked();
-    bool file = allowFilesCbx->isChecked();
-    setAllowOrVersion(file, enable);
 }
 
 void MainWindow::refresh(const bool silent)

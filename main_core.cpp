@@ -106,12 +106,19 @@ QString Core::getMounted()
 void Core::launch(const bool editor, const QString &args)
 {
     bool success;
-    const QString &exe = editor ? d::WE_EXE : (setGameVersion ? d::WC3X_EXE : d::WC3_EXE);
-    QString launchexe = exe;
+    QString exe = editor ? d::WE_EXE : (setGameVersion ? d::WC3X_EXE : d::WC3_EXE);
+
     showMsg(d::LAUNCHING_X___.arg(editor ? d::WE : d::GAME), Msgr::Busy);
-    if(editor)
+
+    if(editor || args.isEmpty())
     {
         success = QDesktopServices::openUrl(QUrl::fromLocalFile(cfg.getSetting(Config::kGamePath)+"/"+exe));
+        if (!editor && !success && setGameVersion)
+        {
+            exe = d::WC3_EXE;
+            success = QDesktopServices::openUrl(QUrl::fromLocalFile(cfg.getSetting(Config::kGamePath)+"/"+exe));
+            exe = d::WC3R_EXE;
+        }
     }
     else
     {
@@ -119,18 +126,18 @@ void Core::launch(const bool editor, const QString &args)
         war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+exe);
         war3.setNativeArguments(args);
         success = war3.startDetached();
-    }
-    if (!success && setGameVersion && !editor)
-    {
-        QString ref = d::WC3_EXE;
-        QProcess war3;
-        war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+ref);
-        war3.setNativeArguments(args);
-        success = war3.startDetached();
-        launchexe = d::WC3R_EXE;
+        if (!success && setGameVersion)
+        {
+            exe = d::WC3_EXE;
+            QProcess war3;
+            war3.setProgram(cfg.getSetting(Config::kGamePath)+"/"+exe);
+            war3.setNativeArguments(args);
+            success = war3.startDetached();
+            exe = d::WC3R_EXE;
+        }
     }
     if(success) showMsg(d::X_LAUNCHED_.arg(editor ? d::WE : d::GAME));
-    else showMsg(d::FAILED_TO_X_.arg(d::lLAUNCH_X).arg(launchexe), Msgr::Error);
+    else showMsg(d::FAILED_TO_X_.arg(d::lLAUNCH_X).arg(exe), Msgr::Error);
 }
 
 bool Core::setAllowOrVersion(const bool enable, const bool version)
@@ -144,7 +151,7 @@ bool Core::setAllowOrVersion(const bool enable, const bool version)
                          reinterpret_cast<const BYTE*>(&value), sizeof(value))
                 == ERROR_SUCCESS)
         {
-            showMsg(d::SET_COMPLETED_);
+            showMsg("Setting Completed");
             RegCloseKey(hKey);
             return true;
         }
